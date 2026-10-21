@@ -12,7 +12,12 @@ func TestParseValidation(t *testing.T) {
 	}{
 		{"devices", []string{"devices"}, true},
 		{"status short deadline", []string{"status", "--address", "AA:BB:CC:DD:EE:FF", "--timeout", "2s"}, true},
-		{"missing address", []string{"status"}, false},
+		{"automatic address", []string{"status"}, true},
+		{"bad address", []string{"status", "--address", "garbage"}, false},
+		{"indefinite control", []string{"control", "--rpm", "2800"}, true},
+		{"watch invalid interval", []string{"watch", "--interval", "0s"}, false},
+		{"smart stop", []string{"option", "--name", "smart-stop", "--value", "delay"}, true},
+		{"bad switch", []string{"option", "--name", "power-on", "--value", "yes"}, false},
 		{"invalid rpm", []string{"set", "--address", "AA:BB:CC:DD:EE:FF", "--rpm", "4000"}, false},
 		{"scan deadline", []string{"scan", "--duration", "10s", "--timeout", "5s"}, false},
 		{"hold deadline", []string{"set", "--address", "AA:BB:CC:DD:EE:FF", "--rpm", "2800", "--hold", "30s"}, false},

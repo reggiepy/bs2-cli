@@ -87,8 +87,8 @@ func (c Client) SetSpeed(ctx context.Context, rpm int) (Status, error) {
 	if err != nil {
 		return s, err
 	}
-	if int(s.TargetRPM) != rpm {
-		return s, fmt.Errorf("target readback mismatch: requested %d, device reports %d", rpm, s.TargetRPM)
+	if int(s.TargetRPM) != rpm || s.Mode != 5 {
+		return s, fmt.Errorf("control readback mismatch: requested software mode at %d RPM; device reports mode %d target %d", rpm, s.Mode, s.TargetRPM)
 	}
 	return s, nil
 }

@@ -64,3 +64,32 @@
 3. 固定转速在连接维持期间验证成功。断开后是否保持、断电是否保留、是否存在设备 watchdog 尚未专项确认。不要把当前程序当成后台温控服务。
 4. 广播扫描未发现设备；Windows 已知设备枚举和按地址直连成功。Windows 快速重连有时暂时返回空特征列表，工具仅重试发现阶段。
 5. 没有修改厂商安装文件、刷固件、安装驱动或改变系统蓝牙配对。
+
+## 原生界面对照与持续控制（后续开发）
+
+用户提供的两张原生界面截图分别显示固定转速和智能变频，另有档位灯、智能启停和通电自启动。截图只提供交互语义，不作为协议字节的推断依据。
+
+使用同一 ILSpyCmd 从同一安装程序集反编译 `FlydigiSpaceStation.Common.Utils.FanSpeedHelper`，核对 `DEVICE_MODES[TestBLEDeviceType.BS2]`：
+
+- 静音三档：1300、1700、1900；厂商默认 1700。
+- 标准三档：2100、2400、2700；厂商默认 2400。
+- 强劲三档：2800、2900、3000；厂商默认 3000。
+- Pro 具有额外 3500/3700/4000 组，不用于此 BS2 的公开命令。
+
+`--level` 只是对应固定 RPM 的软件控制入口，不宣称已经实现原生默认档位持久化。`preset --number` 对外限制为 1–3。
+
+`BLEServiceController.Service.Temperature.TemperatureService` 的 `Open/UpdateTemperature` 表明温度来自 `CPU Package` 和 `GPU Core`，不是通过已知 BS2 蓝牙查询获得。自动温控尚未实现。
+
+从已分析的 `BLEServiceController.dll` 中追踪以下构造函数和 Run 方法（静态重建，尚未实机更改这些选项）：
+
+| CLI 设置 | 类型 | 指令 | payload |
+|---|---|---|---|
+| gear-led | SetGearPositionLEDProto / Service | 48 | on=01，off=00 |
+| power-on | SetAutoStartProto / Service | 0C | on=01，off=02 |
+| smart-stop | SetSmartStartStopProto / Service + SmartStartStopMode | 0D | off=00，instant=01，delay=02 |
+
+编码与 NACK 处理通过单元测试。由于没有确认 getter，结果明确包含 `readback_verified:false`。
+
+实机持续控制：`control --level 7 --duration 4s` 从模式 03 / 3000 RPM 进入模式 05 / 2800 RPM，连续观察实际 2800 RPM，然后输出 restored，模式 03 / 目标 3000 RPM。另一次通过关闭父进程取消管道模拟退出，恢复成功；同一时间第二条 status 命令被设备互斥锁拒绝。取消管道路径与父进程收到 Ctrl+C 后使用的路径一致，但没有把它描述成直接发送真实键盘 Ctrl+C 的测试。
+
+通过每次操作边界的心跳及进程监控，使 `watch/control` 总运行时间不受默认 30 秒限制。强制杀进程、断电、链路丢失仍无法保证恢复。检测到外部模式或目标变化时，主动放弃原状态恢复，避免覆盖用户的新设置。

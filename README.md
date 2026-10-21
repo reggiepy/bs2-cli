@@ -1,69 +1,104 @@
-# BS2 CLI（Windows 蓝牙验证版）
+# BS2 CLI
 
-使用 Go 独立控制飞智 BS2 压风式散热器，无需打开空间站，也不加载飞智 DLL、.NET 或 Python。Go 版本通过 `mise.toml` 固定为 **1.26.5**。Windows 自身的蓝牙驱动和 WinRT 仍然是运行依赖。
+用 Go 独立控制飞智 BS2 压风式散热器，支持 Windows 蓝牙。无需空间站、飞智 DLL、.NET 或 Python；仍使用 Windows 蓝牙驱动和 WinRT。Go 由 mise 固定为 **1.26.5**。
 
-## 已完成的实机验证
+## 快速使用
 
-2026-10-21，在本机名为 `FlyDigi BS2`、固件原始字节为 `00 00 03 05` 的设备上：
-
-- 查询模式、目标转速、实际转速。
-- 空间站完全退出后，设置 **2800 RPM**，连续读回目标 2800、实际 2800 RPM（过程中有 2700/2900 RPM 的瞬时读数）。
-- 测试后恢复原始模式编号 **3**；最终再次读回目标和实际转速均为 **3000 RPM**。
-- Windows 设备记录枚举成功。广播扫描返回空列表；已连接或不广播的设备请用 `devices` 查地址。
-
-当前只实现蓝牙。USB、有线 HID、RGB、智能启停、CPU/GPU 自动温控、后台自启动均未实现。`--hold` 仅保持连接并查询，不是自动温控，也不承诺断线后的固定转速保持行为。
-
-## 使用
-
-先从系统托盘完全退出飞智空间站。工具在连接前检查空间站进程，发现它运行会报错；检查之后再启动空间站，仍可能发生控制竞争。不要让其他程序同时控制该散热器。
-
-在本目录 PowerShell 中运行：
+先从托盘退出飞智空间站，在项目目录运行：
 
 ```powershell
-# 已编译好的程序
 .\dist\bs2.exe devices
-.\dist\bs2.exe status --address DE:32:62:6D:30:20
+.\dist\bs2.exe status
+.\dist\bs2.exe levels
 
-# 设置固定目标，并保持连接观察 8 秒，最后输出读回状态
-.\dist\bs2.exe set --address DE:32:62:6D:30:20 --rpm 2800 --hold 8s
+# 持续观察，不改变设置；Ctrl+C 退出
+.\dist\bs2.exe watch
 
-# 恢复本次测试前的模式（3）
-.\dist\bs2.exe preset --address DE:32:62:6D:30:20 --number 3
+# 原生九档中的第 7 档：2800 RPM；退出后恢复进入前的模式和目标
+.\dist\bs2.exe control --level 7
 
-# 仅扫描正在广播的 BS2
-.\dist\bs2.exe scan --duration 8s
+# 运行 30 秒后自动恢复
+.\dist\bs2.exe control --rpm 2800 --duration 30s
+
+# 一次性设置，退出时不恢复
+.\dist\bs2.exe set --rpm 2800
+
+# 切回静音/标准/强劲三个物理模式之一（使用设备已有的默认转速）
+.\dist\bs2.exe preset --number 3
 ```
 
-地址是本次本机验证设备的地址；其他电脑应以 `devices` 或 `scan` 的输出为准。`devices` 读取 Windows 已知设备记录，不代表设备当前在线。
+地址选择优先级：`--address` > 保存的配置 > Windows 唯一一台已知 BS2。若存在多台，不会擅自选择。
 
-普通 `set` 执行一次即退出；`--hold` 到期也会退出，**不会自动恢复先前档位**。需要恢复时显式运行 `preset`。试验版将 `--rpm` 限定为 1300–3000，只有 2800 和 2900 进行过设置验证，不代表该范围内每个转速都已测试。
+```powershell
+# 记住本机设备地址（其他设备请用 devices 的输出）
+.\dist\bs2.exe config --address DE:32:62:6D:30:20
+.\dist\bs2.exe config
 
-输出为 JSON，诊断和错误写入 stderr。添加 `--debug` 查看收发十六进制数据。`firmware_hex` 保留原始字节，不把它擅自解释成版本号。
+# 临时指定设备，或使用另一份配置文件
+.\dist\bs2.exe status --address DE:32:62:6D:30:20
+.\dist\bs2.exe config --config .\my-bs2.json --address DE:32:62:6D:30:20
+```
 
-默认整条命令最长 30 秒；可用 `--timeout 60s` 调整。Windows BLE 库的部分系统调用无法用 Go context 取消，因此 CLI 通过一个自己的子进程执行 BLE 操作，超时仅终止该子进程。写操作超时不代表设备未改变，请重新查询状态。一个命令运行期间临时会有父、子两个 `bs2.exe` 进程，退出后均结束。
+默认配置为 `%APPDATA%\bs2-cli\config.json`。配置损坏会明确报错，不会悄悄改用其他设备。`devices` 是 Windows 已知设备记录，不证明设备在线；`scan --duration 8s` 只列出正在广播的 BS2。已连接设备不广播时，扫描可能为空，仍可按已知地址连接。
 
-## 构建与检查
+## 对应原生界面
+
+从安装版空间站的 `FanSpeedHelper` 核实 BS2 九档如下：
+
+| 组别 | 全局档位 | 组内 1 / 2 / 3 档 RPM |
+|---|---|---|
+| 静音 silent | 1–3 | 1300 / 1700 / 1900 |
+| 标准 standard | 4–6 | 2100 / 2400 / 2700 |
+| 强劲 strong | 7–9 | 2800 / 2900 / 3000 |
+
+`set/control --level N` 使用这些档位对应的 RPM，进入软件控制；它**不会重写原生三个模式保存的默认档位**。`--level` 与 `--rpm` 互斥。固定 RPM 范围为 1300–3000。`preset --number` 只开放 BS2 的 1–3 模式，不开放 Pro 的超频第 4 模式。
+
+截图中的另外三个设置已实现协议发送：
+
+```powershell
+.\dist\bs2.exe option --name gear-led --value on        # 档位灯：on / off
+.\dist\bs2.exe option --name power-on --value on        # 通电自启动：on / off
+.\dist\bs2.exe option --name smart-stop --value off     # 智能启停：off / instant / delay
+```
+
+这三项基于原程序指令及单元测试实现，**尚未在本轮实机切换验证**。返回 `acknowledged: true` 只表示设备回执接受，`readback_verified: false` 表示没有已确认的查询接口。工具不伪造这些设置的当前状态，也不自动恢复它们。
+
+智能变频不是简单的设备模式编号。原程序读取电脑 **CPU Package / GPU Core** 温度，再计算风速；当前版本尚未实现温度采集和自动曲线。RGB、USB/HID、原生各模式默认档位写入、开机启动和后台 Windows 服务也尚未实现。
+
+## 持续运行与退出
+
+- `watch` 只读；`control` 设置一次固定转速，然后维持连接并监测设备。
+- `--interval` 默认 1 秒，允许 500ms–10s。`--duration` 默认 0，表示直到 Ctrl+C。
+- `control` 默认恢复运行前的模式与目标；`--restore=false` 关闭恢复。恢复后会读回检查，并输出 `restored` 事件；风扇实际转速需要时间变化，不要求立刻等于目标。
+- 检测到物理按键/其他控制器改变模式或目标时，停止控制并保留新设置，不强行覆盖。空间站在运行中启动也会停止监测；此时跳过恢复，避免两个控制器争抢。
+- 同一 Windows 会话内，同一设备只能被一个 `bs2` 命令占用。`control/watch` 运行时，另一个 `status` 会报占用，直接查看原进程的状态流即可。
+- 普通命令 `--timeout 30s` 为整条命令的限制；`watch/control` 的 timeout 为单次操作停滞期限（至少 15 秒），不限制总运行时间。
+- WinRT 系统调用可能无法取消，因此由父进程监控专用子进程。Ctrl+C 通过管道通知子进程，给予最多 12 秒清理；设备恢复本身使用 10 秒上下文。系统调用一直阻塞时才强制结束，错误中会说明恢复未确认。断电、蓝牙丢失、强制终止进程不能保证恢复。
+- 不自动重连或重发已执行的写指令。连接发现阶段允许两次额外重试。
+
+`set --hold 8s` 保留验证版行为：保持连接观察 8 秒，然后退出，**不恢复**。断开后设备是否保持设置、断电是否保留，尚未专项确认。
+
+## 输出与构建
+
+普通命令输出 JSON；`watch/control` 每行输出一个 JSON 事件（`initial`、`controlled`、`status`、`restored`），包含时间戳和设备状态。`--debug` 的十六进制通信日志写入 stderr。`firmware_hex` 保留设备原始字节，不擅自解释版本号。
 
 ```powershell
 mise exec --command "go version"
-# 若 mise 报配置未信任，在核对本目录配置后执行 mise trust
-# 若固定版本尚未安装，执行 mise install
+mise run build
 mise exec --command "go test -race ./..."
 mise exec --command "go vet ./..."
 mise exec --command "golangci-lint run"
-mise exec --command "go build -trimpath -o dist/bs2.exe ./cmd/bs2"
 ```
 
-也可使用 `mise run build`、`mise run test`、`mise run vet`。本机 race 检查使用现有 MinGW GCC；普通可执行文件不需要飞智开发工具。`golangci-lint` 是本机已有的检查工具，不包含在本仓库工具版本固定范围内。
+若 mise 报未信任配置，核对后执行 `mise trust`；固定工具版本缺失时执行 `mise install`。race 测试使用本机已有 MinGW GCC，lint 使用本机已有 golangci-lint。产物在 `dist/bs2.exe`，大小、构建参数及 SHA-256 见 `dist/build-info.json` 和 `dist/SHA256SUMS`。
 
-## 项目结构
+## 验证范围
 
-- `cmd/bs2`：命令行、JSON 输出、进程超时隔离。
-- `internal/ble`：Windows BLE、设备枚举、占用检查。
-- `internal/protocol`：帧编码、校验和分包重组。
-- `internal/device`：设备查询、调速与档位指令。
-- `evidence/protocol.md`：协议来源、实测差异和限制。
+2026-10-21，在设备名 `FlyDigi BS2`、固件字节 `00 00 03 05` 上验证：
 
-本版基于 Windows/amd64 验证；不宣称支持 Linux、macOS 或其他散热器型号。短时间重复连接曾出现 Windows 暂时未发现特征的问题，现仅对特征发现做最多两次额外重试；不会自动重发已执行的调速指令。
+- 查询状态、无需输入地址的设备选择、保存默认地址、固定 2800 RPM 实际转速读回。
+- 第 7 档定时控制及自动恢复原始模式 3、目标 3000 RPM。
+- 取消管道触发恢复，以及重复进程访问被互斥锁拒绝。
+- 持续状态流。子进程取消和操作超时另有进程级自动化测试。
 
-本次检查：`go test -race ./...`、`go vet ./...`、`golangci-lint run` 全部通过。构建为 Go 1.26.5 / windows / amd64 / CGO_ENABLED=1，产物 4,528,640 字节。SHA-256 和构建记录见 `dist/SHA256SUMS`、`dist/build-info.json`。
+只验证 Windows/amd64；未宣称其他系统或其他型号兼容。三个开关和完整九档的硬件行为尚未逐项验证。协议来源与原生枚举的差异记录在 [协议证据](evidence/protocol.md)。
